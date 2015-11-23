@@ -39,7 +39,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.cloud.stream.binder.Binder;
-import org.springframework.cloud.stream.binder.MessageChannelBinderSupport;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
 import org.springframework.messaging.Message;
@@ -104,7 +103,7 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 		properties.put("locators", "localhost[7777]");
 		properties.put("log-level", "warning");
 		properties.put("mcast-port", "0");
-		properties.put("name", this.applicationContext.getId());
+		properties.put("name", this.applicationContext.getDisplayName());
 		this.cache = new CacheFactory(properties).create();
 	}
 
