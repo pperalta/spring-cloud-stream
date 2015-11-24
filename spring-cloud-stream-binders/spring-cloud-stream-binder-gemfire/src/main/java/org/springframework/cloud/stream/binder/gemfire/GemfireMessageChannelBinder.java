@@ -16,12 +16,10 @@
 
 package org.springframework.cloud.stream.binder.gemfire;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.atomic.AtomicLong;
 
 import com.gemstone.gemfire.cache.Cache;
 import com.gemstone.gemfire.cache.CacheFactory;
@@ -43,8 +41,6 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationContextAware;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
-import org.springframework.messaging.MessageHandler;
-import org.springframework.messaging.MessagingException;
 import org.springframework.messaging.SubscribableChannel;
 import org.springframework.util.Assert;
 
@@ -159,6 +155,10 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 	}
 
 	@Override
+	public void bindPubSubConsumer(String name, MessageChannel inboundBindTarget, String group, Properties properties) {
+	}
+
+	@Override
 	public void unbindConsumer(String name, MessageChannel channel) {
 		Region<MessageKey, Message<?>> region = this.regionMap.get(name);
 		if (region != null) {
@@ -172,10 +172,6 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 		if (region != null) {
 			region.close();
 		}
-	}
-
-	@Override
-	public void bindPubSubConsumer(String name, MessageChannel inboundBindTarget, Properties properties) {
 	}
 
 	@Override
@@ -198,6 +194,11 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 	}
 
 	@Override
+	public void unbindPubSubConsumers(String name, String group) {
+
+	}
+
+	@Override
 	public void unbindProducers(String name) {
 	}
 
@@ -217,11 +218,6 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 	@Override
 	public MessageChannel bindDynamicPubSubProducer(String name, Properties properties) {
 		throw new UnsupportedOperationException();
-	}
-
-	@Override
-	public boolean isCapable(Capability capability) {
-		return false;
 	}
 
 	@Override
@@ -267,37 +263,6 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 
 		@Override
 		public void close() {
-		}
-	}
-
-
-	/**
-	 * {@link MessageHandler} implementation that publishes messages
-	 * to a {@link Region}.
-	 */
-	private static class SendingHandler implements MessageHandler {
-
-		private final Region<MessageKey, Message<?>> messageRegion;
-
-		private final AtomicLong sequence = new AtomicLong();
-
-		private final int pid;
-
-		private final long timestamp = System.currentTimeMillis();
-
-		public SendingHandler(Region<MessageKey, Message<?>> messageRegion, int pid) {
-			this.messageRegion = messageRegion;
-			this.pid = pid;
-		}
-
-		@Override
-		public void handleMessage(Message<?> message) throws MessagingException {
-			logger.trace("Publishing message {}", message);
-			this.messageRegion.putAll(Collections.singletonMap(nextMessageKey(), message));
-		}
-
-		private MessageKey nextMessageKey() {
-			return new MessageKey(sequence.getAndIncrement(), timestamp, pid);
 		}
 	}
 
