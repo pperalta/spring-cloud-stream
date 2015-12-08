@@ -17,11 +17,16 @@
 package org.springframework.cloud.stream.binder.gemfire;
 
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 import com.gemstone.gemfire.cache.Cache;
 import com.gemstone.gemfire.cache.Region;
-import com.gemstone.gemfire.cache.util.RegionMembershipListenerAdapter;
+import com.gemstone.gemfire.cache.RegionFactory;
+import com.gemstone.gemfire.cache.RegionShortcut;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -41,8 +46,6 @@ public class SendingHandler implements MessageHandler, Lifecycle {
 
 	private final Cache cache;
 
-	private final Region<MessageKey, Message<?>> messageRegion;
-
 	private final AtomicLong sequence = new AtomicLong();
 
 	private final int pid;
@@ -51,16 +54,55 @@ public class SendingHandler implements MessageHandler, Lifecycle {
 
 	private volatile boolean running;
 
-	public SendingHandler(Cache cache, String name) {
+	private final Region<String, Set<String>> consumerGroupsRegion;
+
+	private final Map<String, Region<MessageKey, Message<?>>> producerRegionMap = new ConcurrentHashMap<>();
+
+	public SendingHandler(Cache cache, Region<String, Set<String>> consumerGroupsRegion, String name) {
 		this.cache = cache;
 		this.name = name;
+		this.consumerGroupsRegion = consumerGroupsRegion;
 		this.pid = cache.getDistributedSystem().getDistributedMember().getProcessId();
+	}
+
+	/**
+	 * Create a {@link Region} instance used for publishing {@link Message} objects.
+	 * This region instance will not store buckets; it is assumed that the regions
+	 * created by consumers will host buckets.
+	 *
+	 * @param name name of the message region
+	 * @return region for producing messages
+	 */
+	private Region<MessageKey, Message<?>> createProducerMessageRegion(String name) {
+		RegionFactory<MessageKey, Message<?>> factory = this.cache.createRegionFactory(RegionShortcut.PARTITION_PROXY);
+		return factory.addAsyncEventQueueId(name + GemfireMessageChannelBinder.QUEUE_POSTFIX)
+				.create(name + GemfireMessageChannelBinder.MESSAGES_POSTFIX);
 	}
 
 	@Override
 	public void handleMessage(Message<?> message) throws MessagingException {
 		logger.trace("Publishing message {}", message);
-		this.messageRegion.putAll(Collections.singletonMap(nextMessageKey(), message));
+		handleRemovedConsumerGroups();
+		Set<String> groups = this.consumerGroupsRegion.get(this.name);
+		for (String group : groups) {
+			String regionName = GemfireMessageChannelBinder.formatMessageRegionName(this.name, group);
+			Region<MessageKey, Message<?>> region = this.producerRegionMap.get(regionName);
+			if (region == null) {
+				region = createProducerMessageRegion(regionName);
+				this.producerRegionMap.put(regionName, region);
+			}
+			region.putAll(Collections.singletonMap(nextMessageKey(), message));
+		}
+	}
+
+	private void handleRemovedConsumerGroups() {
+		Set<String> registeredGroups = this.consumerGroupsRegion.get(this.name);
+		Set<String> knownGroups = this.producerRegionMap.keySet();
+		Set<String> removedGroups = new HashSet<>(knownGroups);
+		removedGroups.removeAll(registeredGroups);
+		for (String group : removedGroups) {
+			this.producerRegionMap.remove(group).close();
+		}
 	}
 
 	private MessageKey nextMessageKey() {
@@ -68,25 +110,20 @@ public class SendingHandler implements MessageHandler, Lifecycle {
 	}
 
 	@Override
-	public synchronized void start() {
-		if (!running) {
-
-		}
-
-
+	public void start() {
+		this.running = true;
 	}
 
 	@Override
 	public void stop() {
-
+		this.running = false;
+		for (Region<MessageKey, Message<?>> region : this.producerRegionMap.values()) {
+			region.close();
+		}
 	}
 
 	@Override
 	public boolean isRunning() {
-		return false;
-	}
-
-	static class RegionLifecycleListener extends RegionMembershipListenerAdapter<String, Message<?>> {
-
+		return this.running;
 	}
 }

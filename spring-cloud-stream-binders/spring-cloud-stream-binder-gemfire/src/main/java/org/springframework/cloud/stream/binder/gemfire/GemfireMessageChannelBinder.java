@@ -16,9 +16,11 @@
 
 package org.springframework.cloud.stream.binder.gemfire;
 
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import com.gemstone.gemfire.cache.Cache;
@@ -43,6 +45,7 @@ import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
 import org.springframework.messaging.SubscribableChannel;
 import org.springframework.util.Assert;
+import org.springframework.util.StringUtils;
 
 
 /**
@@ -69,6 +72,11 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 	public static final String QUEUE_POSTFIX = "-queue";
 
 	/**
+	 * Name of replicated region used to register consumer groups.
+	 */
+	public static final String CONSUMER_GROUPS_REGION = "consumer-groups-region";
+
+	/**
 	 * Application context that created this object.
 	 */
 	private volatile ApplicationContext applicationContext;
@@ -89,7 +97,17 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 	/**
 	 * Map of message regions.
 	 */
-	private Map<String, Region<MessageKey, Message<?>>> regionMap = new ConcurrentHashMap<>();
+	private final Map<String, Region<MessageKey, Message<?>>> regionMap = new ConcurrentHashMap<>();
+
+	/**
+	 * Map of registered {@link SendingHandler}s for producers.
+	 */
+	private final Map<String, SendingHandler> sendingHandlerMap = new ConcurrentHashMap<>();
+
+	/**
+	 * Replicated region for consumer group registration.
+	 */
+	private volatile Region<String, Set<String>> consumerGroupsRegion;
 
 
 	@Override
@@ -101,6 +119,8 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 		properties.put("mcast-port", "0");
 		properties.put("name", this.applicationContext.getDisplayName());
 		this.cache = new CacheFactory(properties).create();
+		RegionFactory<String, Set<String>> regionFactory = this.cache.createRegionFactory(RegionShortcut.REPLICATE);
+		this.consumerGroupsRegion = regionFactory.create(CONSUMER_GROUPS_REGION);
 	}
 
 	/**
@@ -133,41 +153,65 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 		return queueFactory.create(queueId, messageListener);
 	}
 
-	/**
-	 * Create a {@link Region} instance used for publishing {@link Message} objects.
-	 * This region instance will not store buckets; it is assumed that the regions
-	 * created by consumers will host buckets.
-	 *
-	 * @param name name of the message region
-	 * @return region for producing messages
-	 */
-	private Region<MessageKey, Message<?>> createProducerMessageRegion(String name) {
-		RegionFactory<MessageKey, Message<?>> factory = this.cache.createRegionFactory(RegionShortcut.PARTITION_PROXY);
-		return factory.addAsyncEventQueueId(name + QUEUE_POSTFIX).create(name + MESSAGES_POSTFIX);
-	}
-
 	@Override
 	public void bindConsumer(String name, MessageChannel inboundBindTarget, Properties properties) {
-		logger.debug("bindConsumer({})", name);
-		AsyncMessageListener messageListener = new AsyncMessageListener(inboundBindTarget);
-		createAsyncEventQueue(name, messageListener);
-		this.regionMap.put(name, createConsumerMessageRegion(name));
+		logger.warn("bindConsumer{}", name);
+		bindPubSubConsumer(name, inboundBindTarget, null, properties);
 	}
 
 	@Override
 	public void bindPubSubConsumer(String name, MessageChannel inboundBindTarget, String group, Properties properties) {
+		if (StringUtils.isEmpty(group)) {
+			group = "default";
+		}
+		String messageRegionName = formatMessageRegionName(name, group);
+		AsyncMessageListener messageListener = new AsyncMessageListener(inboundBindTarget);
+		createAsyncEventQueue(messageRegionName, messageListener);
+		this.regionMap.put(name, createConsumerMessageRegion(messageRegionName));
+		addConsumerGroup(name, group);
 	}
 
-	@Override
-	public void unbindConsumer(String name, MessageChannel channel) {
-		Region<MessageKey, Message<?>> region = this.regionMap.get(name);
-		if (region != null) {
-			region.close();
+	public static String formatMessageRegionName(String name, String group) {
+		return String.format("%s-%s", name, group);
+	}
+
+	private void addConsumerGroup(String name, String group) {
+		boolean groupAdded = false;
+		while (!groupAdded) {
+			Set<String> oldGroupSet = this.consumerGroupsRegion.get(name);
+			Set<String> newGroupSet = new HashSet<>();
+			newGroupSet.add(group);
+			if (oldGroupSet == null) {
+				groupAdded = this.consumerGroupsRegion.putIfAbsent(name, newGroupSet) == null;
+			}
+			else {
+				newGroupSet.addAll(oldGroupSet);
+				groupAdded = this.consumerGroupsRegion.replace(name, oldGroupSet, newGroupSet);
+			}
 		}
 	}
 
+	private void removeConsumerGroup(String name, String group) {
+		boolean groupRemoved = false;
+		while (!groupRemoved) {
+			Set<String> oldGroupSet = this.consumerGroupsRegion.get(name);
+			if (oldGroupSet == null) {
+				return;
+			}
+			Set<String> newGroupSet = new HashSet<>(oldGroupSet);
+			newGroupSet.remove(group);
+			groupRemoved = this.consumerGroupsRegion.replace(name, oldGroupSet, newGroupSet);
+		}
+	}
+
+	private void removeConsumerGroups(String name) {
+		this.consumerGroupsRegion.remove(name);
+	}
+
+
 	@Override
-	public void unbindProducer(String name, MessageChannel outboundBindTarget) {
+	public void unbindConsumer(String name, MessageChannel channel) {
+		removeConsumerGroups(name);
 		Region<MessageKey, Message<?>> region = this.regionMap.get(name);
 		if (region != null) {
 			region.close();
@@ -178,11 +222,17 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 	public void bindProducer(String name, MessageChannel outboundBindTarget, Properties properties) {
 		Assert.isInstanceOf(SubscribableChannel.class, outboundBindTarget);
 
-		Region<MessageKey, Message<?>> producerRegion = createProducerMessageRegion(name);
-		((SubscribableChannel) outboundBindTarget).subscribe(
-				new SendingHandler(producerRegion,
-						this.cache.getDistributedSystem().getDistributedMember().getProcessId()));
-		this.regionMap.put(name, producerRegion);
+		SendingHandler handler = new SendingHandler(this.cache, this.consumerGroupsRegion, name);
+		handler.start();
+
+		((SubscribableChannel) outboundBindTarget).subscribe(handler);
+		this.sendingHandlerMap.put(name, handler);
+	}
+
+	@Override
+	public void unbindProducer(String name, MessageChannel outboundBindTarget) {
+		SendingHandler handler = this.sendingHandlerMap.remove(name);
+		handler.stop();
 	}
 
 	@Override
