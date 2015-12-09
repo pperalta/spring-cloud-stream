@@ -16,6 +16,8 @@
 
 package org.springframework.cloud.stream.binder.gemfire;
 
+import static org.springframework.cloud.stream.binder.gemfire.GemfireMessageChannelBinder.*;
+
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Map;
@@ -54,6 +56,10 @@ public class SendingHandler implements MessageHandler, Lifecycle {
 
 	private volatile boolean running;
 
+	/**
+	 * Replicated region for consumer group registration.
+	 * Key is the binding name, value is the group name.
+	 */
 	private final Region<String, Set<String>> consumerGroupsRegion;
 
 	private final Map<String, Region<MessageKey, Message<?>>> producerRegionMap = new ConcurrentHashMap<>();
@@ -85,7 +91,7 @@ public class SendingHandler implements MessageHandler, Lifecycle {
 		handleRemovedConsumerGroups();
 		Set<String> groups = this.consumerGroupsRegion.get(this.name);
 		for (String group : groups) {
-			String regionName = GemfireMessageChannelBinder.formatMessageRegionName(this.name, group);
+			String regionName = formatMessageRegionName(this.name, group);
 			Region<MessageKey, Message<?>> region = this.producerRegionMap.get(regionName);
 			if (region == null) {
 				region = createProducerMessageRegion(regionName);
@@ -101,7 +107,7 @@ public class SendingHandler implements MessageHandler, Lifecycle {
 		Set<String> removedGroups = new HashSet<>(knownGroups);
 		removedGroups.removeAll(registeredGroups);
 		for (String group : removedGroups) {
-			this.producerRegionMap.remove(group).close();
+			this.producerRegionMap.remove(formatMessageRegionName(this.name, group)).close();
 		}
 	}
 

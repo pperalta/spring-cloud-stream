@@ -106,6 +106,7 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 
 	/**
 	 * Replicated region for consumer group registration.
+	 * Key is the binding name, value is the group name.
 	 */
 	private volatile Region<String, Set<String>> consumerGroupsRegion;
 
@@ -121,6 +122,19 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 		this.cache = new CacheFactory(properties).create();
 		RegionFactory<String, Set<String>> regionFactory = this.cache.createRegionFactory(RegionShortcut.REPLICATE);
 		this.consumerGroupsRegion = regionFactory.create(CONSUMER_GROUPS_REGION);
+	}
+
+	/**
+	 * For a binding name and consumer group name, return a string
+	 * used for naming the region that will hold messages for this binding
+	 * and consumer group.
+	 *
+	 * @param name binding name
+	 * @param group consumer group name
+	 * @return name of region for messages for this binding and consumer group
+	 */
+	public static String formatMessageRegionName(String name, String group) {
+		return String.format("%s-%s", name, group);
 	}
 
 	/**
@@ -151,28 +165,6 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 		queueFactory.setBatchSize(this.batchSize);
 		String queueId = name + QUEUE_POSTFIX;
 		return queueFactory.create(queueId, messageListener);
-	}
-
-	@Override
-	public void bindConsumer(String name, MessageChannel inboundBindTarget, Properties properties) {
-		logger.warn("bindConsumer{}", name);
-		bindPubSubConsumer(name, inboundBindTarget, null, properties);
-	}
-
-	@Override
-	public void bindPubSubConsumer(String name, MessageChannel inboundBindTarget, String group, Properties properties) {
-		if (StringUtils.isEmpty(group)) {
-			group = "default";
-		}
-		String messageRegionName = formatMessageRegionName(name, group);
-		AsyncMessageListener messageListener = new AsyncMessageListener(inboundBindTarget);
-		createAsyncEventQueue(messageRegionName, messageListener);
-		this.regionMap.put(name, createConsumerMessageRegion(messageRegionName));
-		addConsumerGroup(name, group);
-	}
-
-	public static String formatMessageRegionName(String name, String group) {
-		return String.format("%s-%s", name, group);
 	}
 
 	private void addConsumerGroup(String name, String group) {
@@ -208,6 +200,22 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 		this.consumerGroupsRegion.remove(name);
 	}
 
+	@Override
+	public void bindConsumer(String name, MessageChannel inboundBindTarget, Properties properties) {
+		bindPubSubConsumer(name, inboundBindTarget, null, properties);
+	}
+
+	@Override
+	public void bindPubSubConsumer(String name, MessageChannel inboundBindTarget, String group, Properties properties) {
+		if (StringUtils.isEmpty(group)) {
+			group = "default";
+		}
+		String messageRegionName = formatMessageRegionName(name, group);
+		AsyncMessageListener messageListener = new AsyncMessageListener(inboundBindTarget);
+		createAsyncEventQueue(messageRegionName, messageListener);
+		this.regionMap.put(name, createConsumerMessageRegion(messageRegionName));
+		addConsumerGroup(name, group);
+	}
 
 	@Override
 	public void unbindConsumer(String name, MessageChannel channel) {
