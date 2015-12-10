@@ -39,21 +39,40 @@ import org.springframework.messaging.MessagingException;
 
 /**
  * {@link MessageHandler} implementation that publishes messages
- * to a {@link Region}.
+ * to GemFire {@link Region}s.
  */
 public class SendingHandler implements MessageHandler, Lifecycle {
 	private static final Logger logger = LoggerFactory.getLogger(SendingHandler.class);
 
+	/**
+	 * Binding name.
+	 */
 	private final String name;
 
+	/**
+	 * GemFire peer-to-peer cache.
+	 */
 	private final Cache cache;
 
+	/**
+	 * Sequence number for generating unique message IDs.
+	 */
 	private final AtomicLong sequence = new AtomicLong();
 
+	/**
+	 * Process ID for this process; used for generating unique message IDs.
+	 */
 	private final int pid;
 
+	/**
+	 * Timestamp of when this object was instantiated; used for
+	 * generating unique message IDs.
+	 */
 	private final long timestamp = System.currentTimeMillis();
 
+	/**
+	 * Flag that determines if this component is running.
+	 */
 	private volatile boolean running;
 
 	/**
@@ -62,8 +81,20 @@ public class SendingHandler implements MessageHandler, Lifecycle {
 	 */
 	private final Region<String, Set<String>> consumerGroupsRegion;
 
-	private final Map<String, Region<MessageKey, Message<?>>> producerRegionMap = new ConcurrentHashMap<>();
+	/**
+	 * Map of message regions used for producing messages.
+	 */
+	private final Map<String, Region<MessageKey, Message<?>>> regionMap = new ConcurrentHashMap<>();
 
+	/**
+	 * Construct a {@link SendingHandler} for a binding.
+	 *
+	 * @param cache GemFire peer-to-peer cache; used to generate factories for
+	 *              message regions
+	 * @param consumerGroupsRegion replicated region used to hold consumer
+	 *                             group registrations
+	 * @param name binding name
+	 */
 	public SendingHandler(Cache cache, Region<String, Set<String>> consumerGroupsRegion, String name) {
 		this.cache = cache;
 		this.name = name;
@@ -92,25 +123,34 @@ public class SendingHandler implements MessageHandler, Lifecycle {
 		Set<String> groups = this.consumerGroupsRegion.get(this.name);
 		for (String group : groups) {
 			String regionName = formatMessageRegionName(this.name, group);
-			Region<MessageKey, Message<?>> region = this.producerRegionMap.get(regionName);
+			Region<MessageKey, Message<?>> region = this.regionMap.get(regionName);
 			if (region == null) {
 				region = createProducerMessageRegion(regionName);
-				this.producerRegionMap.put(regionName, region);
+				this.regionMap.put(regionName, region);
 			}
 			region.putAll(Collections.singletonMap(nextMessageKey(), message));
 		}
 	}
 
+	/**
+	 * Remove regions from {@link #regionMap} for consumer groups
+	 * that have been removed from {@link #consumerGroupsRegion}.
+	 */
 	private void handleRemovedConsumerGroups() {
 		Set<String> registeredGroups = this.consumerGroupsRegion.get(this.name);
-		Set<String> knownGroups = this.producerRegionMap.keySet();
+		Set<String> knownGroups = this.regionMap.keySet();
 		Set<String> removedGroups = new HashSet<>(knownGroups);
 		removedGroups.removeAll(registeredGroups);
 		for (String group : removedGroups) {
-			this.producerRegionMap.remove(formatMessageRegionName(this.name, group)).close();
+			this.regionMap.remove(formatMessageRegionName(this.name, group)).close();
 		}
 	}
 
+	/**
+	 * Generate and return a new message key for a message.
+	 *
+	 * @return new message key
+	 */
 	private MessageKey nextMessageKey() {
 		return new MessageKey(sequence.getAndIncrement(), timestamp, pid);
 	}
@@ -123,7 +163,7 @@ public class SendingHandler implements MessageHandler, Lifecycle {
 	@Override
 	public void stop() {
 		this.running = false;
-		for (Region<MessageKey, Message<?>> region : this.producerRegionMap.values()) {
+		for (Region<MessageKey, Message<?>> region : this.regionMap.values()) {
 			region.close();
 		}
 	}

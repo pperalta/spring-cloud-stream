@@ -95,7 +95,7 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 	private volatile int batchSize = 1000;
 
 	/**
-	 * Map of message regions.
+	 * Map of message regions used for consuming messages.
 	 */
 	private final Map<String, Region<MessageKey, Message<?>>> regionMap = new ConcurrentHashMap<>();
 
@@ -167,6 +167,12 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 		return queueFactory.create(queueId, messageListener);
 	}
 
+	/**
+	 * Register a consumer group for a binding.
+	 *
+	 * @param name  binding name
+	 * @param group consumer group name
+	 */
 	private void addConsumerGroup(String name, String group) {
 		boolean groupAdded = false;
 		while (!groupAdded) {
@@ -183,6 +189,12 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 		}
 	}
 
+	/**
+	 * Remove registration for a consumer group for a binding.
+	 *
+	 * @param name  binding name
+	 * @param group consumer group name
+	 */
 	private void removeConsumerGroup(String name, String group) {
 		boolean groupRemoved = false;
 		while (!groupRemoved) {
@@ -196,6 +208,11 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 		}
 	}
 
+	/**
+	 * Remove registration for all consumer groups for a binding.
+	 *
+	 * @param name binding name.
+	 */
 	private void removeConsumerGroups(String name) {
 		this.consumerGroupsRegion.remove(name);
 	}
@@ -218,16 +235,12 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 	}
 
 	@Override
-	public void unbindConsumer(String name, MessageChannel channel) {
-		removeConsumerGroups(name);
-		Region<MessageKey, Message<?>> region = this.regionMap.get(name);
-		if (region != null) {
-			region.close();
-		}
+	public void bindProducer(String name, MessageChannel outboundBindTarget, Properties properties) {
+		bindPubSubProducer(name, outboundBindTarget, properties);
 	}
 
 	@Override
-	public void bindProducer(String name, MessageChannel outboundBindTarget, Properties properties) {
+	public void bindPubSubProducer(String name, MessageChannel outboundBindTarget, Properties properties) {
 		Assert.isInstanceOf(SubscribableChannel.class, outboundBindTarget);
 
 		SendingHandler handler = new SendingHandler(this.cache, this.consumerGroupsRegion, name);
@@ -238,34 +251,44 @@ public class GemfireMessageChannelBinder implements Binder<MessageChannel>, Appl
 	}
 
 	@Override
-	public void unbindProducer(String name, MessageChannel outboundBindTarget) {
-		SendingHandler handler = this.sendingHandlerMap.remove(name);
-		handler.stop();
-	}
-
-	@Override
-	public void bindPubSubProducer(String name, MessageChannel outboundBindTarget, Properties properties) {
-	}
-
-	@Override
 	public void unbindConsumers(String name) {
+		for (String regionName : this.regionMap.keySet()) {
+			if (regionName.startsWith(name)) {
+				this.regionMap.remove(regionName).close();
+			}
+		}
+		removeConsumerGroups(name);
 	}
 
 	@Override
 	public void unbindPubSubConsumers(String name, String group) {
-
+		this.regionMap.get(formatMessageRegionName(name, group)).close();
+		removeConsumerGroup(name, group);
 	}
 
 	@Override
 	public void unbindProducers(String name) {
+		this.sendingHandlerMap.get(name).stop();
+	}
+
+	@Override
+	public void unbindConsumer(String name, MessageChannel channel) {
+		unbindConsumers(name);
+	}
+
+	@Override
+	public void unbindProducer(String name, MessageChannel outboundBindTarget) {
+		unbindProducers(name);
 	}
 
 	@Override
 	public void bindRequestor(String name, MessageChannel requests, MessageChannel replies, Properties properties) {
+		throw new UnsupportedOperationException();
 	}
 
 	@Override
 	public void bindReplier(String name, MessageChannel requests, MessageChannel replies, Properties properties) {
+		throw new UnsupportedOperationException();
 	}
 
 	@Override

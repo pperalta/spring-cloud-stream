@@ -20,8 +20,10 @@ import static org.junit.Assert.*;
 
 import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Collections;
 import java.util.List;
 import java.util.Properties;
 import java.util.concurrent.TimeUnit;
@@ -80,6 +82,7 @@ public class GemfireBinderTests {
 	 */
 	public static final String LOCATOR_NAME = "locator1";
 
+
 	/**
 	 * Test basic message sending functionality.
 	 *
@@ -87,8 +90,22 @@ public class GemfireBinderTests {
 	 */
 	@Test
 	public void testMessageSendReceive() throws Exception {
+		testMessageSendReceive(null);
+	}
+
+	/**
+	 * Test consumer group functionality.
+	 *
+	 * @throws Exception
+	 */
+	@Test
+	public void testMessageSendReceiveConsumerGroups() throws Exception {
+		testMessageSendReceive(new String[]{"a", "b"});
+	}
+
+	public void testMessageSendReceive(String[] groups) throws Exception {
 		LocatorLauncher locatorLauncher = null;
-		JavaApplication consumer = null;
+		JavaApplication[] consumers = new JavaApplication[groups == null ? 1 : groups.length];
 		JavaApplication producer = null;
 
 		try {
@@ -101,18 +118,28 @@ public class GemfireBinderTests {
 			locatorLauncher.start();
 			locatorLauncher.waitOnStatusResponse(TIMEOUT, 5, TimeUnit.MILLISECONDS);
 
-			consumer = launch(Consumer.class, null, null);
-			waitForConsumer(consumer);
+			for (int i = 0; i < consumers.length; i++) {
+				consumers[i] = launch(Consumer.class, null,
+						groups == null ? null : Collections.singletonList(groups[i]));
+			}
+			for (JavaApplication consumer : consumers) {
+				waitForConsumer(consumer);
+			}
 
 			producer = launch(Producer.class, null, null);
-			assertEquals(MESSAGE_PAYLOAD, waitForMessage(consumer));
+
+			for (JavaApplication consumer : consumers) {
+				assertEquals(MESSAGE_PAYLOAD, waitForMessage(consumer));
+			}
 		}
  		finally {
 			if (producer != null) {
 				producer.close();
 			}
-			if (consumer != null) {
-				consumer.close();
+			for (JavaApplication consumer : consumers) {
+				if (consumer != null) {
+					consumer.close();
+				}
 			}
 			if (locatorLauncher != null) {
 				locatorLauncher.stop();
@@ -233,6 +260,7 @@ public class GemfireBinderTests {
 		if (systemProperties != null) {
 			schema.setSystemProperties(new PropertiesBuilder(systemProperties));
 		}
+		schema.setWorkingDirectory(Files.createTempDirectory(null).toFile());
 
 		LocalJavaApplicationBuilder<SimpleJavaApplication> builder =
 				new LocalJavaApplicationBuilder<>(LocalPlatform.getInstance());
@@ -276,6 +304,12 @@ public class GemfireBinderTests {
 		 */
 		private static volatile String messagePayload;
 
+		/**
+		 * Main method.
+		 *
+		 * @param args if present, first arg is consumer group name
+		 * @throws Exception
+		 */
 		public static void main(String[] args) throws Exception {
 			GemfireMessageChannelBinder binder = new GemfireMessageChannelBinder();
 			binder.setApplicationContext(new GenericApplicationContext());
@@ -290,7 +324,11 @@ public class GemfireBinderTests {
 					messagePayload = payload;
 				}
 			});
-			binder.bindConsumer(BINDING_NAME, consumerChannel, new Properties());
+			String group = null;
+			if (args.length > 0) {
+				group = args[0];
+			}
+			binder.bindPubSubConsumer(BINDING_NAME, consumerChannel, group, new Properties());
 			isBound = true;
 
 			Thread.sleep(Long.MAX_VALUE);
