@@ -35,6 +35,7 @@ import org.junit.Test;
 import org.springframework.cloud.stream.binder.Binder;
 import org.springframework.cloud.stream.binder.BinderPropertyKeys;
 import org.springframework.cloud.stream.binder.Binding;
+import org.springframework.cloud.stream.binder.DefaultBinding;
 import org.springframework.cloud.stream.binder.TestUtils;
 import org.springframework.integration.IntegrationMessageHeaderAccessor;
 import org.springframework.integration.channel.DirectChannel;
@@ -108,10 +109,10 @@ public class RawModeKafkaBinderTests extends KafkaBinderTests {
 						((byte[]) receive2.getPayload())[0]),
 				containsInAnyOrder((byte)0, (byte)1, (byte)2));
 
-		binder.unbind(input0Binding);
-		binder.unbind(input1Binding);
-		binder.unbind(input2Binding);
-		binder.unbind(outputBinding);
+		input0Binding.unbind();
+		input1Binding.unbind();
+		input2Binding.unbind();
+		outputBinding.unbind();
 	}
 
 	@Test
@@ -128,7 +129,7 @@ public class RawModeKafkaBinderTests extends KafkaBinderTests {
 		output.setBeanName("test.output");
 		Binding<MessageChannel> outputBinding = binder.bindProducer("part.0", output, properties);
 		@SuppressWarnings("unchecked")
-		List<Binding<MessageChannel>> bindings = TestUtils.getPropertyValue(binder, "binder.bindings", List.class);
+		List<DefaultBinding<MessageChannel>> bindings = TestUtils.getPropertyValue(binder, "binder.bindings", List.class);
 		assertEquals(1, bindings.size());
 		try {
 			AbstractEndpoint endpoint = bindings.get(0).getEndpoint();
@@ -178,10 +179,8 @@ public class RawModeKafkaBinderTests extends KafkaBinderTests {
 						((byte[]) receive2.getPayload())[0]),
 				containsInAnyOrder((byte)0, (byte)1, (byte)2));
 
-		binder.unbind(input0Binding);
-		binder.unbind(input1Binding);
-		binder.unbind(input2Binding);
-		binder.unbind(outputBinding);
+		input0Binding.unbind();
+		input1Binding.unbind();
 	}
 
 	@Test
@@ -199,8 +198,8 @@ public class RawModeKafkaBinderTests extends KafkaBinderTests {
 		Message<?> inbound = receive(moduleInputChannel);
 		assertNotNull(inbound);
 		assertEquals("foo", new String((byte[])inbound.getPayload()));
-		binder.unbind(producerBinding);
-		binder.unbind(consumerBinding);
+		producerBinding.unbind();
+		consumerBinding.unbind();
 	}
 
 	// Ignored, since raw mode does not support headers
@@ -250,7 +249,7 @@ public class RawModeKafkaBinderTests extends KafkaBinderTests {
 			assertEquals("foo", new String((byte[]) tapped2.getPayload()));
 		}
 		// delete one tap stream is deleted
-		binder.unbind(input3Binding);
+		input3Binding.unbind();
 		Message<?> message2 = MessageBuilder.withPayload("bar".getBytes()).build();
 		moduleOutputChannel.send(message2);
 
@@ -266,10 +265,10 @@ public class RawModeKafkaBinderTests extends KafkaBinderTests {
 		assertNotNull(receive(module3InputChannel));
 
 		// clean up
-		binder.unbind(input1Binding);
-		binder.unbind(input2Binding);
-		binder.unbind(input3Binding);
-		binder.unbind(producerBinding);
+		input1Binding.unbind();
+		input2Binding.unbind();
+		input3Binding.unbind();
+		producerBinding.unbind();
 		assertTrue(getBindings(binder).isEmpty());
 	}
 
