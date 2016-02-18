@@ -17,21 +17,20 @@
 package org.springframework.cloud.stream.binder;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
-import static org.junit.Assert.assertTrue;
 
 import java.util.Collection;
 import java.util.Collections;
-import java.util.List;
 
 import org.junit.After;
 import org.junit.Test;
 
-import org.springframework.beans.DirectFieldAccessor;
 import org.springframework.http.MediaType;
 import org.springframework.integration.channel.DirectChannel;
 import org.springframework.integration.channel.QueueChannel;
+import org.springframework.integration.endpoint.AbstractEndpoint;
 import org.springframework.integration.support.MessageBuilder;
 import org.springframework.messaging.Message;
 import org.springframework.messaging.MessageChannel;
@@ -73,16 +72,16 @@ public abstract class AbstractBinderTests {
 		Binding<MessageChannel> foo1ProducerBinding = binder.bindProducer("foo.1", new DirectChannel(), null);
 		Binding<MessageChannel> foo1ConsumerBinding = binder.bindConsumer("foo.1", "test", new DirectChannel(), null);
 		Binding<MessageChannel> foo2ProducerBinding = binder.bindProducer("foo.2", new DirectChannel(), null);
-		Collection<?> bindings = getBindings(binder);
-		assertEquals(5, bindings.size());
 		foo0ProducerBinding.unbind();
-		assertEquals(4, bindings.size());
+		assertFalse(TestUtils.getPropertyValue(foo0ProducerBinding, "endpoint", AbstractEndpoint.class).isRunning());
 		foo0ConsumerBinding.unbind();
 		foo1ProducerBinding.unbind();
-		assertEquals(2, bindings.size());
+		assertFalse(TestUtils.getPropertyValue(foo0ConsumerBinding, "endpoint", AbstractEndpoint.class).isRunning());
+		assertFalse(TestUtils.getPropertyValue(foo1ProducerBinding, "endpoint", AbstractEndpoint.class).isRunning());
 		foo1ConsumerBinding.unbind();
 		foo2ProducerBinding.unbind();
-		assertTrue(bindings.isEmpty());
+		assertFalse(TestUtils.getPropertyValue(foo1ConsumerBinding, "endpoint", AbstractEndpoint.class).isRunning());
+		assertFalse(TestUtils.getPropertyValue(foo2ProducerBinding, "endpoint", AbstractEndpoint.class).isRunning());
 	}
 
 	@Test
@@ -170,17 +169,6 @@ public abstract class AbstractBinderTests {
 		consumerBinding.unbind();
 	}
 
-	protected Collection<?> getBindings(Binder<MessageChannel> testBinder) {
-		if (testBinder instanceof AbstractTestBinder) {
-			return getBindingsFromBinder(((AbstractTestBinder<?>) testBinder).getCoreBinder());
-		}
-		return Collections.EMPTY_LIST;
-	}
-
-	protected Collection<?> getBindingsFromBinder(Binder<MessageChannel> binder) {
-		DirectFieldAccessor accessor = new DirectFieldAccessor(binder);
-		return (List<?>) accessor.getPropertyValue("bindings");
-	}
 
 	protected abstract Binder<MessageChannel> getBinder() throws Exception;
 
