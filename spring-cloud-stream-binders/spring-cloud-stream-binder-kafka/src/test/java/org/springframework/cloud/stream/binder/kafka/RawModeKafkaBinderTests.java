@@ -294,11 +294,11 @@ public class RawModeKafkaBinderTests extends KafkaBinderTests {
 		assertMessageReceive(moduleInputChannel, "foo-x-payload");
 		assertMessageReceive(moduleInputChannel, "foo-y-payload");
 
-		binder.unbind(producerBinding1);
-		binder.unbind(consumerBinding1);
+		producerBinding1.unbind();
+		producerBinding2.unbind();
 
-		binder.unbind(producerBinding2);
-		binder.unbind(consumerBinding2);
+		producerBinding1.unbind();
+		producerBinding2.unbind();
 	}
 
 	private void assertMessageReceive(QueueChannel moduleInputChannel, String payload) {
